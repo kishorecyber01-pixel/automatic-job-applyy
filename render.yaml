@@ -1,0 +1,43 @@
+# render.yaml — Render.com deployment config
+# Commit this file to GitHub, then in Render: New → Blueprint → select this repo.
+# Render will automatically read this and create the web service.
+
+services:
+  - type: web
+    name: autoapply
+    env: node
+    plan: free                          # Render's free tier (spins down when idle)
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000                    # Render assigns this automatically; keep as 10000
+      # ── Set these in Render's dashboard under Environment, NOT here ──────────
+      # These are listed so you know which variables to add — never put real
+      # values in this file since it gets committed to GitHub.
+      - key: MONGO_URI
+        sync: false                     # tells Render: "I'll set this manually"
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+      - key: DASHBOARD_SECRET
+        sync: false
+      - key: CRON_SCHEDULE
+        value: "0 6 * * *"
+      - key: MAX_APPLY_PER_DAY
+        value: "20"
+      - key: MIN_MATCH_SCORE
+        value: "45"
+      - key: YOUR_NAME
+        sync: false
+      - key: YOUR_EMAIL
+        sync: false
+      - key: YOUR_PHONE
+        sync: false
+      - key: YOUR_LINKEDIN
+        sync: false

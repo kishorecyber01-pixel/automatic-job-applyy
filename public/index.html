@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoApply — Job Dashboard</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --bg2:       #1a1d27;
+    --bg3:       #22263a;
+    --border:    #2a2f45;
+    --text:      #e8eaf6;
+    --muted:     #8b91b0;
+    --blue:      #4a9eff;
+    --blue-bg:   #0d2a4a;
+    --green:     #4ade80;
+    --green-bg:  #0d2a1a;
+    --amber:     #fbbf24;
+    --amber-bg:  #2a1f0d;
+    --purple:    #a78bfa;
+    --red:       #f87171;
+    --radius:    10px;
+    --font:      -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  .sidebar { background: var(--bg2); border-right: 1px solid var(--border); padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .main { padding: 28px 32px; overflow-y: auto; }
+
+  /* Sidebar */
+  .logo { display: flex; align-items: center; gap: 10px; padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .logo-icon { width: 34px; height: 34px; background: var(--blue); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .logo-text { font-size: 16px; font-weight: 600; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; border-radius: 0; color: var(--muted); transition: all 0.15s; font-size: 13px; border: none; background: none; width: 100%; text-align: left; font-family: var(--font); }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: var(--blue-bg); color: var(--blue); border-right: 2px solid var(--blue); }
+  .nav-icon { font-size: 16px; width: 20px; }
+  .sidebar-section { padding: 8px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 12px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); margin-left: auto; animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Stats */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
+  .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+  .stat-num { font-size: 30px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+  .stat-lbl { font-size: 12px; color: var(--muted); }
+  .stat-card.blue  .stat-num { color: var(--blue); }
+  .stat-card.green .stat-num { color: var(--green); }
+  .stat-card.amber .stat-num { color: var(--amber); }
+  .stat-card.purple .stat-num { color: var(--purple); }
+
+  /* Section headers */
+  .section-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .section-title { font-size: 15px; font-weight: 600; }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-family: var(--font); cursor: pointer; border: 1px solid var(--border); background: var(--bg3); color: var(--text); transition: all 0.15s; font-weight: 500; }
+  .btn:hover { border-color: var(--blue); color: var(--blue); }
+  .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.primary:hover { background: #2d7dd6; }
+  .btn.green-btn { background: var(--green-bg); color: var(--green); border-color: #1a4a2a; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Job cards */
+  .job-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 10px; display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: start; transition: border-color 0.15s; }
+  .job-card:hover { border-color: var(--blue); }
+  .co-logo { width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 1px solid var(--border); background: var(--bg3); color: var(--muted); flex-shrink: 0; }
+  .job-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .job-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 8px; align-items: center; }
+  .job-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
+  .tag.skill   { background: #1a1040; color: var(--purple); border-color: #3a2a70; }
+  .tag.visa    { background: var(--blue-bg); color: var(--blue); border-color: #1a3a6a; }
+  .tag.applied { background: var(--green-bg); color: var(--green); border-color: #1a4a2a; }
+  .tag.pending { background: var(--amber-bg); color: var(--amber); border-color: #4a3010; }
+  .score-badge { text-align: center; flex-shrink: 0; }
+  .score-circle { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; margin: 0 auto 4px; }
+  .score-high { background: var(--green-bg); color: var(--green); border: 1.5px solid #1a6a2a; }
+  .score-mid  { background: var(--amber-bg); color: var(--amber); border: 1.5px solid #6a4010; }
+  .score-low  { background: var(--bg3); color: var(--muted); border: 1.5px solid var(--border); }
+  .score-lbl  { font-size: 10px; color: var(--muted); }
+
+  /* Filters */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .filter-btn { padding: 5px 14px; border-radius: 20px; font-size: 12px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; font-family: var(--font); transition: all 0.15s; }
+  .filter-btn.active { background: var(--blue-bg); color: var(--blue); border-color: var(--blue); }
+  .filter-btn:hover:not(.active) { color: var(--text); border-color: var(--muted); }
+
+  /* Log box */
+  .log-box { background: #0a0d14; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 12px; max-height: 320px; overflow-y: auto; line-height: 1.8; }
+  .log-box .ok   { color: var(--green); }
+  .log-box .info { color: var(--blue); }
+  .log-box .warn { color: var(--amber); }
+  .log-box .err  { color: var(--red); }
+  .log-box::-webkit-scrollbar { width: 4px; }
+  .log-box::-webkit-scrollbar-track { background: transparent; }
+  .log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Schedule */
+  .sched-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+  .sched-row { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+  .sched-row:last-child { border-bottom: none; }
+  .sched-time { font-size: 12px; color: var(--muted); min-width: 50px; font-family: monospace; }
+  .sched-desc { font-size: 13px; flex: 1; }
+  .badge { font-size: 11px; padding: 2px 10px; border-radius: 20px; }
+  .badge.done { background: var(--green-bg); color: var(--green); }
+  .badge.run  { background: var(--blue-bg); color: var(--blue); }
+  .badge.pend { background: var(--bg3); color: var(--muted); }
+  .badge.fail { background: #2a0d0d; color: var(--red); }
+
+  /* Toggle */
+  .settings-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 20px; margin-bottom: 16px; }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-info { font-size: 13px; font-weight: 500; }
+  .toggle-sub  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .slider { position: absolute; inset: 0; background: var(--bg3); border: 1px solid var(--border); border-radius: 22px; cursor: pointer; transition: background 0.2s; }
+  .slider:before { content: ''; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: var(--muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+  input:checked + .slider { background: var(--blue); border-color: var(--blue); }
+  input:checked + .slider:before { transform: translateX(16px); background: #fff; }
+
+  /* Countries */
+  .country-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .country-row:last-child { border-bottom: none; }
+  .flag { font-size: 22px; width: 30px; }
+  .country-name { flex: 1; font-size: 13px; }
+  .country-visa { font-size: 11px; color: var(--muted); }
+  .prog-bar { height: 5px; border-radius: 3px; background: var(--bg3); overflow: hidden; width: 120px; }
+  .prog-fill { height: 100%; border-radius: 3px; background: var(--blue); }
+
+  /* Run progress */
+  .run-progress { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 16px; display: none; }
+  .run-progress.visible { display: block; }
+  .prog-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .prog-track { height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
+  .prog-fill-anim { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--blue), var(--purple)); background-size: 200%; animation: shimmer 1.5s infinite; transition: width 0.5s; }
+  @keyframes shimmer { 0%{background-position:0%} 100%{background-position:200%} }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Page title */
+  .page-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .page-sub   { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+
+  /* Source pills */
+  .source-pill { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
+
+  input[type=range] { accent-color: var(--blue); }
+  input[type=text], select { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: var(--font); width: 100%; }
+  input[type=text]:focus, select:focus { outline: none; border-color: var(--blue); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">🤖</div>
+      <span class="logo-text">AutoApply</span>
+    </div>
+
+    <div class="sidebar-section">Main</div>
+    <button class="nav-item active" onclick="switchPane('dashboard',this)">
+      <span class="nav-icon">📊</span> Dashboard
+      <span class="live-dot"></span>
+    </button>
+    <button class="nav-item" onclick="switchPane('jobs',this)">
+      <span class="nav-icon">💼</span> Job matches
+    </button>
+    <button class="nav-item" onclick="switchPane('schedule',this)">
+      <span class="nav-icon">🕐</span> Schedule & logs
+    </button>
+
+    <div class="sidebar-section">Config</div>
+    <button class="nav-item" onclick="switchPane('skills',this)">
+      <span class="nav-icon">⚡</span> Skills & profile
+    </button>
+    <button class="nav-item" onclick="switchPane('countries',this)">
+      <span class="nav-icon">🌍</span> Countries
+    </button>
+
+    <div style="padding:20px;margin-top:auto;border-top:1px solid var(--border);position:absolute;bottom:0;width:100%">
+      <button class="btn primary" style="width:100%;justify-content:center" onclick="triggerRun()" id="runBtn">
+        ▶ Run now
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ═══ Dashboard pane ═══ -->
+    <div id="pane-dashboard" class="pane active">
+      <div class="page-title">Dashboard</div>
+      <div class="page-sub" id="last-run-text">Loading...</div>
+
+      <div class="stat-grid">
+        <div class="stat-card blue">
+          <div class="stat-num" id="s-applied">—</div>
+          <div class="stat-lbl">Applied today</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-num" id="s-high">—</div>
+          <div class="stat-lbl">High match (90%+)</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-num" id="s-total">—</div>
+          <div class="stat-lbl">Total applied (all time)</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-num" id="s-countries">—</div>
+          <div class="stat-lbl">Countries targeted</div>
+        </div>
+      </div>
+
+      <div class="run-progress" id="run-progress">
+        <div class="section-title" style="margin-bottom:10px">🤖 Run in progress...</div>
+        <div class="prog-label" id="progress-label">Starting...</div>
+        <div class="prog-track"><div class="prog-fill-anim" id="progress-bar" style="width:10%"></div></div>
+      </div>
+
+      <div class="section-hdr">
+        <div class="section-title">Live log</div>
+        <button class="btn" onclick="clearLog()">Clear</button>
+      </div>
+      <div class="log-box" id="log-box">
+        <div class="info">[ System ] AutoApply dashboard ready. Waiting for next run...</div>
+      </div>
+
+      <div style="margin-top:20px" class="section-hdr">
+        <div class="section-title">Recent run history</div>
+      </div>
+      <div id="run-history"></div>
+    </div>
+
+    <!-- ═══ Jobs pane ═══ -->
+    <div id="pane-jobs" class="pane">
+      <div class="page-title">Job matches</div>
+      <div class="page-sub">All jobs found and scored by AutoApply</div>
+
+      <div class="filters">
+        <button class="filter-btn active" onclick="filterJobs('all',this)">All</button>
+        <button class="filter-btn" onclick="filterJobs('applied',this)">Applied</button>
+        <button class="filter-btn" onclick="filterJobs('matched',this)">Matched (pending)</button>
+        <button class="filter-btn" onclick="filterJobs('high',this)">High match (90%+)</button>
+        <button class="filter-btn" onclick="filterJobs('visa',this)">Visa sponsored</button>
+      </div>
+      <div id="job-list">
+        <div style="color:var(--muted);text-align:center;padding:40px">
+          Run AutoApply first to see matched jobs here.
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Schedule pane ═══ -->
+    <div id="pane-schedule" class="pane">
+      <div class="page-title">Schedule & logs</div>
+      <div class="page-sub">Daily 06:00 IST auto-run — edit CRON_SCHEDULE in .env to change</div>
+
+      <div class="section-hdr" style="margin-bottom:12px">
+        <div class="section-title">Today's run steps</div>
+        <button class="btn primary" onclick="triggerRun()">▶ Run now</button>
+      </div>
+
+      <div class="sched-card">
+        <div class="sched-row"><span class="sched-time">06:00</span><span class="sched-desc">Scrape jobs — Indeed, Remotive, Arbeitnow, Adzuna</span><span class="badge done" id="st-1">Done</span></div>
+        <div class="sched-row"><span class="sched-time">06:05</span><span class="sched-desc">Score jobs against your skills profile</span><span class="badge done" id="st-2">Done</span></div>
+        <div class="sched-row"><span class="sched-time">06:10</span><span class="sched-desc">Filter by visa sponsorship & blacklist</span><span class="badge done" id="st-3">Done</span></div>
+        <div class="sched-row"><span class="sched-time">06:15</span><span class="sched-desc">Rank, deduplicate, cap at 20/day</span><span class="badge done" id="st-4">Done</span></div>
+        <div class="sched-row"><span class="sched-time">06:20</span><span class="sched-desc">Submit applications</span><span class="badge pend" id="st-5">Pending</span></div>
+        <div class="sched-row"><span class="sched-time">06:30</span><span class="sched-desc">Send email summary report</span><span class="badge pend" id="st-6">Pending</span></div>
+      </div>
+
+      <div class="section-title" style="margin-bottom:10px">Run log</div>
+      <div class="log-box" id="sched-log-box">
+        <span class="info">Waiting for run...</span>
+      </div>
+
+      <div style="margin-top:20px" class="section-title" style="margin-bottom:12px">Settings</div>
+      <div class="settings-card" style="margin-top:12px">
+        <div class="toggle-row"><div><div class="toggle-info">Auto-run at 06:00 IST daily</div><div class="toggle-sub">Controlled by CRON_SCHEDULE in .env</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Skip weekends</div><div class="toggle-sub">Change cron to: 0 6 * * 1-5</div></div><label class="toggle"><input type="checkbox"><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Send email summary</div><div class="toggle-sub">Set EMAIL_USER and EMAIL_PASS in .env</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Daily cap: 20 applications</div><div class="toggle-sub">Edit MAX_APPLY_PER_DAY in .env</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+      </div>
+    </div>
+
+    <!-- ═══ Skills pane ═══ -->
+    <div id="pane-skills" class="pane">
+      <div class="page-title">Skills & profile</div>
+      <div class="page-sub">Edit profile.js in VS Code to update these permanently</div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:14px">Skill match threshold</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="range" min="50" max="99" value="70" id="thresh" step="1" oninput="updateThresh(this.value)" style="flex:1">
+          <span style="font-size:18px;font-weight:700;color:var(--blue);min-width:44px" id="thresh-val">70%</span>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">Only auto-apply to jobs with match score above this threshold</div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:12px">Resume</div>
+        <div id="resume-status" style="font-size:12px;color:var(--muted);margin-bottom:10px">No resume uploaded yet</div>
+        <input type="file" id="resume-input" accept="application/pdf" style="display:none" onchange="uploadResume(this.files[0])">
+        <button class="btn primary" onclick="document.getElementById('resume-input').click()">⬆ Upload resume (PDF)</button>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">We'll scan it for skills and add any new ones below. This never auto-submits applications anywhere.</div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:12px">Your skills (from profile.js + resume)</div>
+        <div id="skills-list" style="display:flex;flex-wrap:wrap;gap:7px"></div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px">
+        <div class="section-title" style="margin-bottom:12px">Target job titles</div>
+        <div id="titles-list" style="display:flex;flex-wrap:wrap;gap:7px"></div>
+      </div>
+    </div>
+
+    <!-- ═══ Countries pane ═══ -->
+    <div id="pane-countries" class="pane">
+      <div class="page-title">Target countries</div>
+      <div class="page-sub">All job searches include "visa sponsorship" as a keyword filter</div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:0 20px;margin-bottom:16px" id="country-list"></div>
+
+      <div class="settings-card">
+        <div class="section-title" style="padding:14px 0;border-bottom:1px solid var(--border)">Visa type filters</div>
+        <div class="toggle-row"><div><div class="toggle-info">H-1B (United States)</div><div class="toggle-sub">US work visa for specialty occupations</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Skilled Worker Visa / Tier 2 (UK)</div><div class="toggle-sub">UK government-sponsored work visa</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Employment Pass (Singapore/Malaysia)</div><div class="toggle-sub">EP and S Pass eligible roles</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">EU Blue Card (Germany/Netherlands)</div><div class="toggle-sub">Highly skilled worker EU permit</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">Critical Skills Permit (Ireland)</div><div class="toggle-sub">Ireland fast-track work permit</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="toggle-row"><div><div class="toggle-info">TSS 482 Visa (Australia)</div><div class="toggle-sub">Employer-sponsored temporary visa</div></div><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const socket = io();
+let currentFilter = 'all';
+const flags = { in:'🇮🇳', gb:'🇬🇧', my:'🇲🇾', sg:'🇸🇬', ca:'🇨🇦', ie:'🇮🇪', de:'🇩🇪', au:'🇦🇺', nl:'🇳🇱', se:'🇸🇪', us:'🇺🇸', remote:'🌐', eu:'🇪🇺' };
+
+// ── Pane switching ─────────────────────────────────────────────────────────────
+function switchPane(name, btn) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'jobs')      loadJobs();
+  if (name === 'skills')    loadProfile();
+  if (name === 'countries') renderCountries();
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('s-applied').textContent   = d.appliedJobs  ?? 0;
+    document.getElementById('s-high').textContent      = d.highMatch     ?? 0;
+    document.getElementById('s-total').textContent     = d.totalJobs     ?? 0;
+    document.getElementById('s-countries').textContent = d.countries     ?? 0;
+    if (d.latestRun) {
+      const dt = new Date(d.latestRun.runAt);
+      document.getElementById('last-run-text').textContent = `Last run: ${dt.toLocaleString()} — ${d.latestRun.totalApplied} applied`;
+    } else {
+      document.getElementById('last-run-text').textContent = 'No runs yet — click "Run now" to start.';
+    }
+    loadRunHistory();
+  } catch {}
+}
+
+// ── Run history ────────────────────────────────────────────────────────────────
+async function loadRunHistory() {
+  try {
+    const r = await fetch('/api/runs');
+    const runs = await r.json();
+    const el = document.getElementById('run-history');
+    if (!runs.length) { el.innerHTML = '<div style="color:var(--muted);font-size:13px">No run history yet.</div>'; return; }
+    el.innerHTML = runs.slice(0,7).map(run => {
+      const dt = new Date(run.runAt);
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;font-size:13px">
+        <span style="color:var(--muted);min-width:130px">${dt.toLocaleString()}</span>
+        <span style="color:var(--green)">${run.totalApplied} applied</span>
+        <span style="color:var(--muted)">•</span>
+        <span style="color:var(--muted)">${run.totalFound} found</span>
+        <span style="color:var(--muted)">•</span>
+        <span style="color:var(--muted)">${Math.round(run.duration||0)}s</span>
+        ${run.emailSent ? '<span style="color:var(--green);font-size:11px;margin-left:auto">📧 Email sent</span>' : ''}
+      </div>`;
+    }).join('');
+  } catch {}
+}
+
+// ── Jobs ───────────────────────────────────────────────────────────────────────
+async function loadJobs() {
+  const params = new URLSearchParams();
+  if (currentFilter === 'applied')  params.set('status', 'applied');
+  if (currentFilter === 'matched')  params.set('status', 'matched');
+  if (currentFilter === 'high')     { params.set('minScore', 90); }
+  if (currentFilter === 'visa')     { /* filter client-side */ }
+
+  try {
+    const r = await fetch('/api/jobs?' + params.toString());
+    const { jobs } = await r.json();
+    renderJobs(jobs);
+  } catch {
+    document.getElementById('job-list').innerHTML = '<div style="color:var(--muted);text-align:center;padding:40px">Could not load jobs.</div>';
+  }
+}
+
+function renderJobs(jobs) {
+  const el = document.getElementById('job-list');
+  if (!jobs || !jobs.length) {
+    el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:40px">No jobs found. Run AutoApply first.</div>';
+    return;
+  }
+  let filtered = jobs;
+  if (currentFilter === 'visa') filtered = jobs.filter(j => j.visaSponsored);
+  el.innerHTML = filtered.map(j => {
+    const sc = j.matchScore >= 90 ? 'score-high' : j.matchScore >= 70 ? 'score-mid' : 'score-low';
+    const flag = flags[j.countryCode] || '🌍';
+    const statusTag = j.status === 'applied'
+      ? '<span class="tag applied">✓ Applied</span>'
+      : '<span class="tag pending">⏳ Pending</span>';
+    const skills = (j.matchedSkills || []).slice(0,4).map(s => `<span class="tag skill">${s}</span>`).join('');
+    return `<div class="job-card">
+      <div class="co-logo">${(j.company||'??').slice(0,2).toUpperCase()}</div>
+      <div>
+        <div class="job-title">${j.title}</div>
+        <div class="job-meta">
+          <span>🏢 ${j.company}</span>
+          <span>${flag} ${j.country}</span>
+          ${j.salary ? `<span>💰 ${j.salary}</span>` : ''}
+          <span class="source-pill">${j.source}</span>
+        </div>
+        <div class="job-tags">
+          ${skills}
+          ${j.visaSponsored ? '<span class="tag visa">✈ Visa sponsored</span>' : ''}
+          ${statusTag}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:14px;align-items:center">
+          <a href="${j.applyUrl}" target="_blank" onclick="markApplied('${j.jobId}', this)" style="color:var(--blue);font-size:12px;text-decoration:none">↗ Open job listing & apply</a>
+          ${j.status !== 'applied' ? `<button class="btn" style="padding:3px 10px;font-size:11px" onclick="markApplied('${j.jobId}', this)">✓ Mark as applied</button>` : ''}
+        </div>
+      </div>
+      <div class="score-badge">
+        <div class="score-circle ${sc}">${j.matchScore}%</div>
+        <div class="score-lbl">match</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function filterJobs(mode, btn) {
+  currentFilter = mode;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadJobs();
+}
+
+// Records that the user opened a listing and applied themselves.
+// This NEVER submits anything automatically — it only updates the tracker
+// after the user has taken action on the real job site.
+async function markApplied(jobId, el) {
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/mark-applied`, { method: 'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (d.ok) { loadJobs(); loadStats(); }
+  } catch {}
+}
+
+function authHeaders() {
+  const secret = localStorage.getItem('dashboardSecret');
+  return secret ? { 'x-dashboard-secret': secret } : {};
+}
+
+// ── Profile ────────────────────────────────────────────────────────────────────
+async function loadProfile() {
+  try {
+    const r = await fetch('/api/profile');
+    const d = await r.json();
+    document.getElementById('skills-list').innerHTML =
+      (d.skills || []).map(s => `<span class="tag skill">${s.name} <span style="opacity:0.5;font-size:10px">×${s.weight}</span></span>`).join('');
+    document.getElementById('titles-list').innerHTML =
+      (d.jobTitles || []).map(t => `<span class="tag">${t}</span>`).join('');
+    document.getElementById('thresh').value = d.scoring?.minScoreToApply || 70;
+    document.getElementById('thresh-val').textContent = (d.scoring?.minScoreToApply || 70) + '%';
+    if (d.resumeFileName) {
+      document.getElementById('resume-status').innerHTML = `✓ <span style="color:var(--green)">${d.resumeFileName}</span> uploaded`;
+    }
+  } catch {}
+}
+
+async function uploadResume(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('resume-status');
+  statusEl.textContent = 'Uploading & scanning...';
+  try {
+    const formData = new FormData();
+    formData.append('resume', file);
+    const r = await fetch('/api/profile/resume', { method: 'POST', headers: authHeaders(), body: formData });
+    const d = await r.json();
+    if (d.ok) {
+      statusEl.innerHTML = `✓ <span style="color:var(--green)">${d.fileName}</span> — found ${d.skillsFound.length} skill(s)`;
+      loadProfile();
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--red)">Upload failed: ${d.message}</span>`;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">Upload failed</span>`;
+  }
+}
+
+async function updateThresh(val) {
+  document.getElementById('thresh-val').textContent = val + '%';
+  await fetch('/api/profile/threshold', { method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify({ minScore: val }) });
+}
+
+// ── Countries ──────────────────────────────────────────────────────────────────
+function renderCountries() {
+  const list = [
+    { flag:'🇮🇳', name:'India',          visa:'Local / No visa needed',   fill:100 },
+    { flag:'🇬🇧', name:'United Kingdom', visa:'Skilled Worker (Tier 2)', fill:88 },
+    { flag:'🇲🇾', name:'Malaysia',        visa:'Employment Pass',         fill:75 },
+    { flag:'🇸🇬', name:'Singapore',       visa:'Employment Pass / S Pass',fill:70 },
+    { flag:'🇨🇦', name:'Canada',          visa:'LMIA / Express Entry',    fill:80 },
+    { flag:'🇮🇪', name:'Ireland',         visa:'Critical Skills Permit',  fill:65 },
+    { flag:'🇺🇸', name:'United States',   visa:'H-1B',                    fill:95 },
+    { flag:'🇦🇺', name:'Australia',       visa:'TSS 482',                 fill:60 },
+    { flag:'🇩🇪', name:'Germany',         visa:'EU Blue Card',            fill:70 },
+    { flag:'🇳🇱', name:'Netherlands',     visa:'Highly Skilled Migrant',  fill:55 },
+    { flag:'🇸🇪', name:'Sweden',          visa:'Work Permit',             fill:45 },
+  ];
+  document.getElementById('country-list').innerHTML = list.map(c => `
+    <div class="country-row">
+      <span class="flag">${c.flag}</span>
+      <div style="flex:1"><div class="country-name">${c.name}</div><div class="country-visa">${c.visa}</div></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${c.fill}%"></div></div>
+    </div>`).join('');
+}
+
+// ── Manual run trigger ─────────────────────────────────────────────────────────
+async function triggerRun() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+  try {
+    const r = await fetch('/api/run', { method: 'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) { alert(d.message); btn.disabled = false; btn.textContent = '▶ Run now'; }
+  } catch { btn.disabled = false; btn.textContent = '▶ Run now'; }
+}
+
+// ── Socket.io — live log updates ───────────────────────────────────────────────
+function appendLog(entry) {
+  const box = document.getElementById('log-box');
+  const sbox = document.getElementById('sched-log-box');
+  const time = new Date(entry.time).toLocaleTimeString();
+  const line = `<div class="${entry.level}">[ ${time} ] ${entry.message}</div>`;
+  [box, sbox].forEach(b => {
+    if (b) { b.insertAdjacentHTML('beforeend', line); b.scrollTop = b.scrollHeight; }
+  });
+}
+
+socket.on('log', appendLog);
+
+socket.on('run:start', () => {
+  document.getElementById('run-progress').classList.add('visible');
+  document.getElementById('progress-bar').style.width = '5%';
+  document.getElementById('progress-label').textContent = 'Scraping job boards...';
+  ['st-1','st-2','st-3','st-4','st-5','st-6'].forEach(id => {
+    document.getElementById(id).className = 'badge pend';
+    document.getElementById(id).textContent = 'Pending';
+  });
+  document.getElementById('st-1').className = 'badge run';
+  document.getElementById('st-1').textContent = 'Running…';
+});
+
+socket.on('run:stats', stats => {
+  document.getElementById('s-applied').textContent = stats.applied || 0;
+  const pct = Math.min(95, 5 + ((stats.applied / 20) * 90));
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = `${stats.found} found • ${stats.matched} matched • ${stats.applied} applied`;
+  if (stats.found > 0)   { document.getElementById('st-1').className='badge done'; document.getElementById('st-1').textContent='Done'; }
+  if (stats.matched > 0) { document.getElementById('st-2').className='badge done'; document.getElementById('st-2').textContent='Done'; document.getElementById('st-3').className='badge done'; document.getElementById('st-3').textContent='Done'; document.getElementById('st-4').className='badge done'; document.getElementById('st-4').textContent='Done'; document.getElementById('st-5').className='badge run'; document.getElementById('st-5').textContent='Running…'; }
+});
+
+socket.on('run:end', data => {
+  document.getElementById('run-progress').classList.remove('visible');
+  document.getElementById('progress-bar').style.width = '100%';
+  document.getElementById('st-5').className='badge done'; document.getElementById('st-5').textContent='Done';
+  document.getElementById('st-6').className='badge done'; document.getElementById('st-6').textContent='Done';
+  const btn = document.getElementById('runBtn');
+  btn.disabled = false; btn.textContent = '▶ Run now';
+  loadStats();
+  if (currentFilter) loadJobs();
+});
+
+function clearLog() { document.getElementById('log-box').innerHTML = ''; }
+
+// ── Dashboard unlock (for deployed/public use) ─────────────────────────────
+// On first visit, asks for DASHBOARD_SECRET and stores it in localStorage.
+// On localhost it's optional — the server allows unauthenticated local dev.
+function checkUnlock() {
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const stored  = localStorage.getItem('dashboardSecret');
+  if (!isLocal && !stored) {
+    document.getElementById('unlock-overlay').style.display = 'flex';
+  }
+}
+
+function submitUnlock() {
+  const val = document.getElementById('unlock-input').value.trim();
+  if (!val) return;
+  localStorage.setItem('dashboardSecret', val);
+  document.getElementById('unlock-overlay').style.display = 'none';
+  loadStats();
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+checkUnlock();
+loadStats();
+renderCountries();
+setInterval(loadStats, 30000);
+</script>
+<!-- ── Dashboard unlock overlay (shown on public deploys) ─────────────────── -->
+<div id="unlock-overlay" style="display:none;position:fixed;inset:0;background:rgba(10,13,20,0.95);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:36px 40px;max-width:380px;width:90%;text-align:center">
+    <div style="font-size:28px;margin-bottom:12px">🔐</div>
+    <div style="font-size:17px;font-weight:700;margin-bottom:6px">AutoApply Dashboard</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Enter your dashboard secret to continue</div>
+    <input id="unlock-input" type="password" placeholder="Dashboard secret"
+      onkeydown="if(event.key==='Enter')submitUnlock()"
+      style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;font-family:var(--font);margin-bottom:12px;outline:none">
+    <button class="btn primary" onclick="submitUnlock()" style="width:100%;justify-content:center">Unlock</button>
+    <div style="font-size:11px;color:var(--muted);margin-top:14px">Set DASHBOARD_SECRET in your Render environment variables</div>
+  </div>
+</div>
+</body>
+</html>

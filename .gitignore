@@ -1,0 +1,22 @@
+# ── Secrets — NEVER commit these ──────────────────────────────────────────────
+.env
+.env.local
+.env.production
+
+# ── Dependencies ───────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Resume / personal data ────────────────────────────────────────────────────
+data/*.pdf
+data/*.docx
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── OS junk ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── VS Code settings (optional — remove if you want to share these) ───────────
+.vscode/
