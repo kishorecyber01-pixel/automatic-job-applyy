@@ -623,7 +623,8 @@ function checkUnlock() {
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const stored  = localStorage.getItem('dashboardSecret');
   if (!isLocal && !stored) {
-    document.getElementById('unlock-overlay').style.display = 'flex';
+    const overlay = document.getElementById('unlock-overlay');
+    if (overlay) overlay.style.display = 'flex';
   }
 }
 
