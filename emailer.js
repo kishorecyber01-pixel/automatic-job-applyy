@@ -1,8 +1,8 @@
-// emailer.js — Sends daily summary email via Gmail
+// emailer.js — Sends daily summary email with ALL matched jobs to click & apply
 
 const nodemailer = require("nodemailer");
 
-async function sendDailySummary({ appliedJobs, skipped, failed, duration, runDate }) {
+async function sendDailySummary({ appliedJobs, skipped, failed, duration, runDate, totalFound }) {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.log("[Email] No credentials set — skipping email.");
     return false;
@@ -12,76 +12,126 @@ async function sendDailySummary({ appliedJobs, skipped, failed, duration, runDat
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // Gmail App Password (not your real password)
+      pass: process.env.EMAIL_PASS,
     },
   });
 
-  const jobRows = appliedJobs.map(j => `
-    <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee">${j.title}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee">${j.company}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee">${j.country}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">
-        <span style="background:${j.matchScore>=90?"#d4edda":"#fff3cd"};color:${j.matchScore>=90?"#155724":"#856404"};
-        padding:2px 8px;border-radius:12px;font-size:12px">${j.matchScore}%</span>
-      </td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee">
-        <a href="${j.applyUrl}" style="color:#185FA5;text-decoration:none">View</a>
-      </td>
-    </tr>`).join("");
+  const high   = appliedJobs.filter(j => j.matchScore >= 80);
+  const medium = appliedJobs.filter(j => j.matchScore >= 60 && j.matchScore < 80);
+  const lower  = appliedJobs.filter(j => j.matchScore < 60);
+
+  function jobRows(jobs) {
+    if (!jobs.length) return `<tr><td colspan="6" style="padding:12px;color:#888;text-align:center">None in this range</td></tr>`;
+    return jobs.map(j => `
+      <tr>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a">
+          <strong style="color:#e0e0f0">${j.title}</strong>
+          <div style="font-size:11px;color:#888;margin-top:2px">${j.matchedSkills?.slice(0,4).join(", ") || ""}</div>
+        </td>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a;color:#ccc">${j.company}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a;color:#ccc">${j.country || j.location || "Remote"}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a;text-align:center">
+          <span style="background:${j.matchScore>=80?"#1a3a2a":"#2a2a1a"};color:${j.matchScore>=80?"#4caf50":"#ffc107"};
+            padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700">${j.matchScore}%</span>
+        </td>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a;font-size:11px;color:#888">${j.source || ""}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #2a2a3a;text-align:center">
+          <a href="${j.applyUrl}" style="background:#185FA5;color:#fff;padding:5px 14px;border-radius:6px;
+            text-decoration:none;font-size:12px;font-weight:600">Apply →</a>
+        </td>
+      </tr>`).join("");
+  }
 
   const html = `
 <!DOCTYPE html>
 <html>
-<body style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;color:#333">
-  <div style="background:#185FA5;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0">
-    <h1 style="margin:0;font-size:20px">🤖 AutoApply — Daily Report</h1>
-    <p style="margin:4px 0 0;opacity:0.8;font-size:13px">${runDate.toDateString()}</p>
+<body style="font-family:Arial,sans-serif;background:#0d0d1a;color:#e0e0f0;margin:0;padding:0">
+<div style="max-width:750px;margin:0 auto;padding:20px">
+
+  <!-- Header -->
+  <div style="background:linear-gradient(135deg,#185FA5,#1a3a6a);padding:24px 28px;border-radius:12px 12px 0 0">
+    <h1 style="margin:0;font-size:22px;color:#fff">🤖 AutoApply — Daily Job Report</h1>
+    <p style="margin:6px 0 0;opacity:0.75;font-size:13px">${runDate.toDateString()} • ${Math.round(duration)}s run time</p>
   </div>
 
-  <div style="background:#f8f9fa;padding:20px 24px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-    <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border:1px solid #e0e0e0">
-      <div style="font-size:28px;font-weight:bold;color:#185FA5">${appliedJobs.length}</div>
-      <div style="font-size:12px;color:#666;margin-top:2px">Applied</div>
-    </div>
-    <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border:1px solid #e0e0e0">
-      <div style="font-size:28px;font-weight:bold;color:#3B6D11">${appliedJobs.filter(j=>j.matchScore>=90).length}</div>
-      <div style="font-size:12px;color:#666;margin-top:2px">High match</div>
-    </div>
-    <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border:1px solid #e0e0e0">
-      <div style="font-size:28px;font-weight:bold;color:#854F0B">${skipped}</div>
-      <div style="font-size:12px;color:#666;margin-top:2px">Skipped</div>
-    </div>
-    <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border:1px solid #e0e0e0">
-      <div style="font-size:28px;font-weight:bold;color:#666">${Math.round(duration)}s</div>
-      <div style="font-size:12px;color:#666;margin-top:2px">Duration</div>
-    </div>
+  <!-- Stats bar -->
+  <div style="background:#13132a;padding:16px 28px;display:flex;gap:0;border-bottom:1px solid #2a2a3a">
+    ${[
+      ["📋", totalFound || 0,         "Scraped",  "#888"],
+      ["✅", appliedJobs.length,       "Matched",  "#4caf50"],
+      ["⭐", high.length,              "High (80%+)","#ffc107"],
+      ["⏭️", skipped,                 "Skipped",  "#888"],
+    ].map(([icon, val, label, color]) => `
+      <div style="flex:1;text-align:center;padding:8px">
+        <div style="font-size:26px;font-weight:800;color:${color}">${val}</div>
+        <div style="font-size:11px;color:#666;margin-top:2px">${icon} ${label}</div>
+      </div>`).join("")}
   </div>
 
-  <div style="padding:20px 24px">
-    <h2 style="font-size:16px;margin:0 0 12px">Jobs applied today</h2>
-    ${appliedJobs.length === 0
-      ? '<p style="color:#666;font-size:14px">No jobs applied today. Check your profile settings.</p>'
-      : `<table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="background:#f1f3f5">
-              <th style="padding:8px 12px;text-align:left;font-weight:600">Title</th>
-              <th style="padding:8px 12px;text-align:left;font-weight:600">Company</th>
-              <th style="padding:8px 12px;text-align:left;font-weight:600">Country</th>
-              <th style="padding:8px 12px;text-align:center;font-weight:600">Match</th>
-              <th style="padding:8px 12px;text-align:left;font-weight:600">Link</th>
-            </tr>
-          </thead>
-          <tbody>${jobRows}</tbody>
-        </table>`
-    }
-    ${failed > 0 ? `<p style="color:#dc3545;font-size:13px;margin-top:12px">⚠️ ${failed} applications failed — check logs.</p>` : ""}
+  ${appliedJobs.length === 0 ? `
+  <div style="background:#13132a;padding:32px;text-align:center;border-radius:0 0 12px 12px">
+    <div style="font-size:40px;margin-bottom:12px">🔍</div>
+    <div style="color:#888;font-size:14px">No jobs matched today. The system scraped ${totalFound || 0} listings.<br>
+    Try lowering MIN_MATCH_SCORE in Render environment variables.</div>
+  </div>` : `
+
+  <!-- High match jobs -->
+  <div style="background:#13132a;padding:20px 28px;margin-top:2px">
+    <h2 style="color:#4caf50;font-size:15px;margin:0 0 12px">⭐ High Match (80%+) — Apply to these first</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#1a1a2e">
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Role</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Company</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Location</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Score</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Source</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Action</th>
+      </tr></thead>
+      <tbody>${jobRows(high)}</tbody>
+    </table>
   </div>
 
-  <div style="background:#f8f9fa;padding:14px 24px;font-size:12px;color:#888;border-top:1px solid #eee">
-    AutoApply • Running locally on your machine •
-    <a href="http://localhost:${process.env.PORT||3500}" style="color:#185FA5">Open dashboard</a>
+  <!-- Medium match jobs -->
+  <div style="background:#13132a;padding:20px 28px;margin-top:2px">
+    <h2 style="color:#ffc107;font-size:15px;margin:0 0 12px">🎯 Good Match (60–79%)</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#1a1a2e">
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Role</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Company</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Location</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Score</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Source</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Action</th>
+      </tr></thead>
+      <tbody>${jobRows(medium)}</tbody>
+    </table>
   </div>
+
+  <!-- Lower match -->
+  ${lower.length > 0 ? `
+  <div style="background:#13132a;padding:20px 28px;margin-top:2px">
+    <h2 style="color:#888;font-size:15px;margin:0 0 12px">📌 Other Matches (below 60%)</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#1a1a2e">
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Role</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Company</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Location</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Score</th>
+        <th style="padding:8px 10px;text-align:left;color:#888;font-weight:600">Source</th>
+        <th style="padding:8px 10px;text-align:center;color:#888;font-weight:600">Action</th>
+      </tr></thead>
+      <tbody>${jobRows(lower)}</tbody>
+    </table>
+  </div>` : ""}
+  `}
+
+  <!-- Footer -->
+  <div style="background:#0d0d1a;padding:16px 28px;font-size:11px;color:#444;border-top:1px solid #1a1a2e;border-radius:0 0 12px 12px">
+    AutoApply • <a href="http://automatic-job-applyy.onrender.com" style="color:#185FA5">Open dashboard</a> •
+    Running on Render • Jobs scraped from LinkedIn, Remotive, Arbeitnow, Naukri & more
+  </div>
+
+</div>
 </body>
 </html>`;
 
@@ -89,7 +139,7 @@ async function sendDailySummary({ appliedJobs, skipped, failed, duration, runDat
     await transporter.sendMail({
       from:    `"AutoApply 🤖" <${process.env.EMAIL_USER}>`,
       to:      process.env.EMAIL_TO || process.env.EMAIL_USER,
-      subject: `✅ AutoApply: ${appliedJobs.length} jobs applied — ${runDate.toDateString()}`,
+      subject: `🎯 AutoApply: ${appliedJobs.length} jobs matched — ${runDate.toDateString()}`,
       html,
     });
     console.log("[Email] Daily summary sent.");

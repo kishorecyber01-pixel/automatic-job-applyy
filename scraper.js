@@ -441,7 +441,17 @@ async function scrapeAllJobs(logFn) {
   }
   logFn("ok", `Arbeitnow (EU visa-sponsored): ${allJobs.length - arbStart} jobs fetched`);
 
-  // 7. Indeed RSS per country
+
+  // 8. Naukri.com (India jobs — no key needed)
+  let naukriStart = allJobs.length;
+  for (const title of profile.jobTitles.slice(0, 4)) {
+    const jobs = await scrapeNaukri(title);
+    allJobs.push(...jobs);
+    await sleep(1000);
+  }
+  logFn("ok", `Naukri (India): ${allJobs.length - naukriStart} jobs fetched`);
+
+  // 9. Indeed RSS per country
   let indeedCount = 0;
   for (const c of profile.targetCountries) {
     for (const title of profile.jobTitles.slice(0, 2)) {
@@ -472,3 +482,49 @@ async function scrapeAllJobs(logFn) {
 }
 
 module.exports = { scrapeAllJobs };
+
+// ── 9. Naukri.com (India's biggest job board — injected at module load) ───────
+// Uses Naukri's internal search API (no official public API but this endpoint
+// is stable and used by their own website).
+async function scrapeNaukri(query) {
+  const jobs = [];
+  try {
+    const encoded = encodeURIComponent(query);
+    const res = await axios.get(
+      `https://www.naukri.com/jobapi/v3/search?noOfResults=30&urlType=search_by_keyword&searchType=adv&keyword=${encoded}&pageNo=1&seoKey=${encoded}-jobs&src=jobsearchDesk&latLong=`,
+      {
+        timeout: 15000,
+        headers: {
+          "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept":       "application/json",
+          "appid":        "109",
+          "systemid":     "Naukri",
+          "Referer":      `https://www.naukri.com/${encoded.replace(/%20/g,"-")}-jobs`,
+        },
+      }
+    );
+
+    const items = res.data?.jobDetails || [];
+    for (const item of items) {
+      const salary = item.placeholders?.find(p => p.type === "salary")?.label || "";
+      const loc    = item.placeholders?.find(p => p.type === "location")?.label || "India";
+      jobs.push({
+        jobId:       makeId("naukri", String(item.jobId || item.title)),
+        title:       item.title,
+        company:     item.companyName,
+        location:    loc,
+        country:     "India",
+        countryCode: "in",
+        description: stripHtml(item.jobDescription || item.tagsAndSkills || ""),
+        applyUrl:    item.jdURL ? `https://www.naukri.com${item.jdURL}` : "https://www.naukri.com",
+        source:      "naukri",
+        workType:    item.isWork_from_home ? "Remote" : "On-site",
+        salary,
+        foundAt:     new Date(),
+      });
+    }
+  } catch (e) {
+    console.error(`[Naukri] ${e.message}`);
+  }
+  return jobs;
+}

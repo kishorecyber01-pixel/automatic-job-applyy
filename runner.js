@@ -4,25 +4,20 @@ const { Job, RunLog } = require("./models/Job");
 const { scrapeAllJobs } = require("./scraper");
 const { scoreJob }      = require("./matcher");
 const { sendDailySummary } = require("./emailer");
+const { sendTelegramAlert } = require("./telegram");
 const profile = require("./profile");
 
-// ── Global state for live dashboard streaming ─────────────────────────────────
 let currentRun = null;
-
 function getRunState() { return currentRun; }
 
-// ── Simulate form submission (real apply opens browser) ───────────────────────
-// For jobs that have a direct apply URL, we log the apply and open the URL.
-// True auto-fill requires Puppeteer — see applyWithPuppeteer() below.
 async function applyToJob(job, logFn) {
   try {
-    // Mark as applied in DB
     await Job.findOneAndUpdate(
       { jobId: job.jobId },
-      { status: "applied", appliedAt: new Date(), notes: "Auto-applied via AutoApply" },
+      { status: "applied", appliedAt: new Date(), notes: "Marked applied via AutoApply" },
       { upsert: true }
     );
-    logFn("ok", `Applied → ${job.title} at ${job.company} (${job.country}) [${job.matchScore}%]`);
+    logFn("ok", `Matched → ${job.title} at ${job.company} (${job.country}) [${job.matchScore}%]`);
     return true;
   } catch (e) {
     logFn("warn", `Failed → ${job.title}: ${e.message}`);
@@ -31,14 +26,12 @@ async function applyToJob(job, logFn) {
   }
 }
 
-// ── Main run function ─────────────────────────────────────────────────────────
 async function runDailyApply(io) {
   const startTime = Date.now();
   const runDate   = new Date();
   const logs      = [];
-  let totalFound  = 0, totalMatched = 0, totalApplied = 0, totalSkipped = 0, totalFailed = 0;
+  let totalFound = 0, totalMatched = 0, totalApplied = 0, totalSkipped = 0, totalFailed = 0;
 
-  // Live log emitter — sends to dashboard via Socket.io if available
   function logFn(level, message) {
     const entry = { time: new Date(), level, message };
     logs.push(entry);
@@ -47,13 +40,10 @@ async function runDailyApply(io) {
     if (currentRun) currentRun.logs.push(entry);
   }
 
-  // Set running state
   currentRun = {
-    running:      true,
-    startedAt:    runDate,
-    logs:         [],
-    stats:        { found: 0, matched: 0, applied: 0, skipped: 0, failed: 0 },
-    appliedJobs:  [],
+    running: true, startedAt: runDate, logs: [],
+    stats: { found: 0, matched: 0, applied: 0, skipped: 0, failed: 0 },
+    appliedJobs: [], matchedJobs: [],
   };
   if (io) io.emit("run:start", { startedAt: runDate });
 
@@ -73,17 +63,14 @@ async function runDailyApply(io) {
     const candidateJobs = [];
 
     for (const raw of scrapedJobs) {
-      // Skip if already applied
       const existing = await Job.findOne({ jobId: raw.jobId });
       if (existing && ["applied", "skipped"].includes(existing.status)) {
         totalSkipped++;
         continue;
       }
 
-      // Score the job
       const { score, matchedSkills, hasVisa, isBlacklisted } = scoreJob(raw);
 
-      // Save to DB regardless (for history)
       await Job.findOneAndUpdate(
         { jobId: raw.jobId },
         {
@@ -96,77 +83,66 @@ async function runDailyApply(io) {
         { upsert: true, new: true }
       );
 
-      if (isBlacklisted) {
-        logFn("warn", `Blacklisted: ${raw.title} at ${raw.company}`);
-        totalSkipped++;
-        continue;
-      }
-
-      if (score < minScore) {
-        totalSkipped++;
-        continue;
-      }
+      if (isBlacklisted) { totalSkipped++; continue; }
+      if (score < minScore) { totalSkipped++; continue; }
 
       candidateJobs.push({ ...raw, matchScore: score, matchedSkills, visaSponsored: hasVisa });
     }
 
-    // Sort by score descending
     candidateJobs.sort((a, b) => b.matchScore - a.matchScore);
     totalMatched = candidateJobs.length;
     currentRun.stats.matched = totalMatched;
+    currentRun.matchedJobs   = candidateJobs; // ← store ALL matched for email
     if (io) io.emit("run:stats", currentRun.stats);
 
     logFn("ok", `${totalMatched} jobs passed matching (score ≥ ${minScore}%)`);
     logFn("ok", `${totalSkipped} duplicates/low-match skipped`);
 
-    // ── Step 3: Apply ────────────────────────────────────────────────────────
+    // ── Step 3: Mark top matches ────────────────────────────────────────────
     const toApply = candidateJobs.slice(0, maxPerDay);
-    logFn("info", `Applying to top ${toApply.length} jobs (cap: ${maxPerDay}/day)`);
+    logFn("info", `Marking top ${toApply.length} jobs (cap: ${maxPerDay}/day)`);
 
     for (const job of toApply) {
       const ok = await applyToJob(job, logFn);
-      if (ok) {
-        totalApplied++;
-        currentRun.appliedJobs.push(job);
-      } else {
-        totalFailed++;
-      }
+      if (ok) { totalApplied++; currentRun.appliedJobs.push(job); }
+      else     { totalFailed++; }
       currentRun.stats.applied = totalApplied;
       currentRun.stats.failed  = totalFailed;
       if (io) io.emit("run:stats", currentRun.stats);
-      // Small delay between applications
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
     }
 
     // ── Step 4: Save run log ────────────────────────────────────────────────
     const duration = (Date.now() - startTime) / 1000;
     const runLog = await RunLog.create({
-      runAt:        runDate,
-      totalFound,
-      totalMatched,
-      totalApplied,
-      totalSkipped,
-      totalFailed,
-      duration,
-      logs,
+      runAt: runDate, totalFound, totalMatched,
+      totalApplied, totalSkipped, totalFailed, duration, logs,
       countries: profile.targetCountries.map(c => c.country),
     });
 
-    logFn("ok", `Run complete — ${totalApplied} applied, ${totalSkipped} skipped, ${totalFailed} failed`);
+    logFn("ok", `Run complete — ${totalApplied} marked, ${totalSkipped} skipped, ${totalFailed} failed`);
     logFn("info", `Duration: ${Math.round(duration)}s`);
 
-    // ── Step 5: Send email ──────────────────────────────────────────────────
+    // ── Step 5: Send email with ALL matched jobs (not just auto-applied) ────
     logFn("info", "Sending daily summary email...");
     const emailSent = await sendDailySummary({
-      appliedJobs: currentRun.appliedJobs,
-      skipped: totalSkipped,
-      failed:  totalFailed,
+      appliedJobs: currentRun.matchedJobs,   // ← ALL matched, not just auto-applied
+      skipped:     totalSkipped,
+      failed:      totalFailed,
       duration,
       runDate,
+      totalFound,
     });
     await RunLog.findByIdAndUpdate(runLog._id, { emailSent });
-
     if (emailSent) logFn("ok", "Email summary sent ✓");
+
+    // ── Step 6: Telegram alerts for top 5 high-match jobs ──────────────────
+    const topJobs = candidateJobs.slice(0, 5);
+    if (topJobs.length > 0) {
+      await sendTelegramAlert(topJobs, runDate);
+      if (topJobs.length) logFn("ok", `Telegram: alerted ${topJobs.length} top matches`);
+    }
+
     logFn("info", "═══ AutoApply run finished ═══");
 
   } catch (err) {
